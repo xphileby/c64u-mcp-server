@@ -32,13 +32,34 @@ This skill enables creating and running BASIC programs on a Commodore 64 by writ
 **BASIC Program Format:**
 - Start address: $0801 (2049 decimal)
 - Each line: `[Next Line Ptr] [Line Number] [Tokenized Content] [00]`
-- Last line: Next pointer = $0000 (marks end)
+- Program termination: After the last line's $00 terminator, write `$00 $00` as a null link pointer
 
 **Critical Pointers:**
-- $002D-$002E: End of BASIC (points after last $00)
+- $002D-$002E: End of BASIC (points after the final $00 $00 terminator)
 - $002F-$0030: Start of variables (same as end of BASIC)
 
 See references/memory-format.md for complete memory layout details.
+
+## CRITICAL: End-of-Program Marker Placement
+
+**⚠️ IMPORTANT**: The `$00 $00` end-of-program marker is NOT the link pointer OF the last line. It comes AFTER the last line as a separate null link pointer.
+
+### Correct Structure:
+```
+[Last Line Link Ptr] [Line Number] [Content] [00 terminator] [00 00 end marker]
+                                                              ↑
+                                              This is a SEPARATE null pointer
+                                              that would be the link for a
+                                              non-existent "next line"
+```
+
+### Incorrect (BUG):
+```
+[00 00] [Line Number] [Content] [00]   ← WRONG! BASIC stops before reading this line!
+```
+
+### Why This Matters:
+BASIC reads the link pointer FIRST, BEFORE the line content. If the link pointer is $0000, BASIC thinks "end of program" and stops—it never reads the line number or content that follows.
 
 ## Tokenization Rules
 
@@ -81,7 +102,7 @@ Next line starts at $0801 + 14 = $080F
 Pointer: $0F $08 (little-endian)
 ```
 
-**Last line**: Always use $00 $00 as next pointer to mark program end.
+**Last line**: The last line needs a VALID link pointer pointing to where the end marker will be, then content, then $00 terminator, then `$00 $00` end marker.
 
 ## Complete Example
 
@@ -91,45 +112,67 @@ Program:
 20 GOTO 10
 ```
 
-Tokenized hex:
+### Correct Tokenized Hex:
 ```
-0F080A00972035333238302C300000001400892031300000
+0F080A00972035333238302C3000 18081400892031300000
 ```
 
-Breakdown:
+### Breakdown:
 ```
-0F08     - Next line at $080F
+LINE 10 at $0801:
+0F08     - Next line at $080F (points to line 20)
 0A00     - Line 10
 97       - POKE
 20       - Space
 3533323830 - "53280"
 2C       - Comma
 30       - "0"
-00       - End line
+00       - End of line 10
 
-0000     - No next line (program end)
+LINE 20 at $080F:
+1808     - Next line at $0818 (points to end marker location)
 1400     - Line 20
 89       - GOTO
 20       - Space
 3130     - "10"
-00       - End line
+00       - End of line 20
+
+END MARKER at $0818:
+0000     - Null pointer = END OF PROGRAM
 ```
 
-Commands:
+### Memory Map:
+```
+$0801: 0F 08  ─┐ Line 10 link → $080F
+$0803: 0A 00   │ Line number 10
+$0805: 97 ...  │ POKE 53280,0
+$080E: 00     ─┘ Line 10 terminator
+
+$080F: 18 08  ─┐ Line 20 link → $0818
+$0811: 14 00   │ Line number 20  
+$0813: 89 ...  │ GOTO 10
+$0817: 00     ─┘ Line 20 terminator
+
+$0818: 00 00  ── END OF PROGRAM MARKER
+
+$081A: (End of BASIC - pointers point here)
+```
+
+### Commands:
 ```
 1. commodore64:machine_reset
 
 2. commodore64:write_memory
    address: "0801"
-   data: "0F080A00972035333238302C300000001400892031300000"
+   data: "0F080A00972035333238302C300018081400892031300000"
 
 3. commodore64:write_memory
    address: "002D"
-   data: "1808"  (program ends at $0818)
+   data: "1A08"  (program ends at $081A, after the 00 00)
 
 4. commodore64:write_memory
    address: "002F"
-   data: "1808"  (variables start at $0818)
+   data: "1A08"  (variables start at $081A)
 
 5. commodore64:write_memory
    address: "0277"
@@ -154,6 +197,11 @@ Inject commands at $0277 (keyboard buffer) with count at $00C6:
 
 ## Debugging Common Issues
 
+**Last line not showing in LIST:**
+- ⚠️ Most common bug: `$00 $00` placed AS the last line's link pointer instead of AFTER the last line
+- The last line's link pointer must point to a valid address where `$00 $00` is stored
+- Fix: Last line needs `[valid link ptr] [line#] [content] [00]` then `[00 00]` after
+
 **Garbled listing:**
 - Wrong line pointers → recalculate byte positions
 - Wrong token values → check references/tokens.md
@@ -165,9 +213,19 @@ Inject commands at $0277 (keyboard buffer) with count at $00C6:
 - Incorrect token for keyword
 
 **Program won't run:**
-- Last line pointer not $0000
 - End-of-BASIC pointer ($002D) incorrect
 - Keyboard buffer count doesn't match command length
+
+## Validation Checklist
+
+Before finalizing a program, verify:
+
+1. ☐ Each line's link pointer points to the NEXT line's first byte
+2. ☐ Last line's link pointer points to where `$00 $00` is stored
+3. ☐ `$00 $00` end marker comes AFTER last line's `$00` terminator
+4. ☐ $002D-$002E points to byte AFTER the `$00 $00` end marker
+5. ☐ $002F-$0030 matches $002D-$002E
+6. ☐ Keyboard buffer count matches command string length
 
 ## Reference Files
 
