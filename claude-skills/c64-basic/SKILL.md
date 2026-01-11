@@ -25,13 +25,15 @@ This skill enables creating and running BASIC programs on a Commodore 64 by writ
 
 4. **Update BASIC pointers**: Set end-of-BASIC ($002D-$002E) and start-of-variables ($002F-$0030)
 
-5. **Inject keyboard commands**: Write "LIST" + CR + "RUN" + CR to keyboard buffer ($0277) and set count ($00C6)
+5. **Type keyboard commands**: Type send RUN command via keyboard to start program execution
 
-6. **In case of errors**: debug issue by
+6. **Validate result**: Check if program execution started successfully by examining the screen or using commodore64:capture_screen tool
+
+7. **In case of errors**: debug issue by
    - running commodore64:capture_screen tool to capture screen and examine problem
    - exposing program with keyboard command LIST or part of program with LIST stating first and last lines of program fragment and examining it with commodore64:capture_screen tool
-   - updating large parts of program directly using commodore64:write_memory
-   - exposing commands to keyboard buffer to make small updates and fixes
+   - typing commands to make small updates and fixes
+   - updating large parts of program directly using commodore64:write_memory (may be unsafe and require validation)
 
 ## Memory Structure Overview
 
