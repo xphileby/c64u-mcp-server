@@ -5,9 +5,11 @@ This server provides MCP tools for interacting with the Commodore 64 Ultimate Co
 device via its REST API.
 """
 
+import asyncio
 import base64
 import io
 import os
+import re
 from typing import Optional
 import httpx
 from PIL import Image
@@ -305,6 +307,78 @@ C64_CHARSET = bytes([
     0xe7,0xe7,0xc7,0x0f,0x1f,0xff,0xff,0xff,  # curve LR rev
     0xff,0xff,0xff,0x1f,0x0f,0xc7,0xe7,0xe7,  # curve UR rev
 ])
+
+# Keyboard buffer constants
+KEYBUF_ADDR = 0x0277  # Keyboard buffer (10 bytes)
+KEYBUF_LEN_ADDR = 0xC6  # Number of characters in buffer
+KEYBUF_MAX_SIZE = 10  # Maximum buffer size
+
+# Special key placeholders for type_text (JSON-friendly)
+SPECIAL_KEYS = {
+    "{RETURN}": 13,
+    "{RET}": 13,
+    "{ENTER}": 13,
+    "{HOME}": 19,
+    "{CLR}": 147,
+    "{CLEAR}": 147,
+    "{DEL}": 20,
+    "{DELETE}": 20,
+    "{INS}": 148,
+    "{INSERT}": 148,
+    "{UP}": 145,
+    "{DOWN}": 17,
+    "{LEFT}": 157,
+    "{RIGHT}": 29,
+    "{F1}": 133,
+    "{F2}": 137,
+    "{F3}": 134,
+    "{F4}": 138,
+    "{F5}": 135,
+    "{F6}": 139,
+    "{F7}": 136,
+    "{F8}": 140,
+    "{STOP}": 3,
+    "{RUN}": 131,
+    "{SPACE}": 32,
+}
+
+
+def ascii_to_petscii(text: str) -> bytes:
+    """Convert ASCII/Unicode text to PETSCII keyboard codes.
+
+    Supports special key placeholders like {RETURN}, {HOME}, {CLR}, etc.
+    """
+    result = []
+
+    # Find all special keys and regular text segments
+    pattern = r'(\{[A-Z0-9_]+\})'
+    parts = re.split(pattern, text)
+
+    for part in parts:
+        if part.startswith('{') and part.endswith('}'):
+            # Special key placeholder
+            upper_part = part.upper()
+            if upper_part in SPECIAL_KEYS:
+                result.append(SPECIAL_KEYS[upper_part])
+            # Skip unknown placeholders
+        else:
+            # Regular text
+            for char in part:
+                code = ord(char)
+                if char == ' ':
+                    result.append(32)  # Space
+                elif 'A' <= char <= 'Z':
+                    result.append(code)
+                elif 'a' <= char <= 'z':
+                    # Lowercase -> uppercase PETSCII
+                    result.append(code - 32)
+                elif '0' <= char <= '9':
+                    result.append(code)
+                elif char in '!"#$%&\'()*+,-./:;<=>?@[]^':
+                    result.append(code)
+                # Skip other unmapped characters
+    return bytes(result)
+
 
 # API base URL - configurable via environment variable
 BASE_URL = os.environ.get("C64U_URL", "http://192.168.200.157")
@@ -620,6 +694,41 @@ async def list_tools() -> list[Tool]:
                     },
                 },
                 "required": [],
+            },
+        ),
+        Tool(
+            name="type_text",
+            description="Type text into the C64 keyboard buffer. Converts ASCII to PETSCII and writes to the keyboard buffer at $0277. The C64 will process these keystrokes. Automatically handles text longer than 10 chars by chunking. Use {RETURN} for newline, {CLR} to clear screen, {HOME} for home, {UP}/{DOWN}/{LEFT}/{RIGHT} for cursor, {F1}-{F8} for function keys, {DEL}/{INS} for delete/insert.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "Text to type. Use placeholders for special keys: {RETURN}, {HOME}, {CLR}, {UP}, {DOWN}, {LEFT}, {RIGHT}, {DEL}, {INS}, {F1}-{F8}, {STOP}. Letters are converted to uppercase PETSCII.",
+                    },
+                    "wait_ms": {
+                        "type": "integer",
+                        "description": "Milliseconds to wait after typing for buffer to be processed (default: 100)",
+                        "minimum": 0,
+                        "maximum": 5000,
+                    },
+                },
+                "required": ["text"],
+            },
+        ),
+        Tool(
+            name="send_key",
+            description="Send a special key to the C64 keyboard buffer. For control keys that can't be easily typed as text.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "Special key name",
+                        "enum": ["RETURN", "HOME", "CLR", "DEL", "INS", "UP", "DOWN", "LEFT", "RIGHT", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "RUN_STOP"],
+                    },
+                },
+                "required": ["key"],
             },
         ),
 
@@ -1341,6 +1450,118 @@ async def _handle_tool(client: httpx.AsyncClient, name: str, args: dict) -> str:
             "info": mode_str
         }
 
+    elif name == "type_text":
+        text = args["text"]
+        wait_ms = args.get("wait_ms", 100)
+
+        # Convert text to PETSCII
+        petscii_bytes = ascii_to_petscii(text)
+
+        if len(petscii_bytes) == 0:
+            return "No valid characters to type"
+
+        # Process in chunks of KEYBUF_MAX_SIZE (10 characters)
+        total_typed = 0
+        for i in range(0, len(petscii_bytes), KEYBUF_MAX_SIZE):
+            chunk = petscii_bytes[i:i + KEYBUF_MAX_SIZE]
+            chunk_len = len(chunk)
+
+            # Wait for keyboard buffer to be empty before writing
+            for _ in range(50):  # Max 50 attempts (5 seconds)
+                resp = await client.get("/v1/machine:readmem", params={
+                    "address": f"{KEYBUF_LEN_ADDR:02X}", "length": 1
+                })
+                resp.raise_for_status()
+                if resp.content[0] == 0:
+                    break
+                await asyncio.sleep(0.1)
+
+            # Write characters to keyboard buffer
+            resp = await client.post(
+                "/v1/machine:writemem",
+                params={"address": f"{KEYBUF_ADDR:04X}"},
+                content=chunk
+            )
+            resp.raise_for_status()
+
+            # Set buffer length
+            resp = await client.post(
+                "/v1/machine:writemem",
+                params={"address": f"{KEYBUF_LEN_ADDR:02X}"},
+                content=bytes([chunk_len])
+            )
+            resp.raise_for_status()
+
+            total_typed += chunk_len
+
+            # Wait for processing if more chunks to come
+            if i + KEYBUF_MAX_SIZE < len(petscii_bytes):
+                await asyncio.sleep(wait_ms / 1000.0)
+
+        # Final wait for buffer processing
+        if wait_ms > 0:
+            await asyncio.sleep(wait_ms / 1000.0)
+
+        return f"Typed {total_typed} characters"
+
+    elif name == "send_key":
+        key = args["key"]
+
+        # Map key names to PETSCII codes
+        key_codes = {
+            "RETURN": 13,
+            "HOME": 19,
+            "CLR": 147,
+            "DEL": 20,
+            "INS": 148,
+            "UP": 145,
+            "DOWN": 17,
+            "LEFT": 157,
+            "RIGHT": 29,
+            "F1": 133,
+            "F2": 137,
+            "F3": 134,
+            "F4": 138,
+            "F5": 135,
+            "F6": 139,
+            "F7": 136,
+            "F8": 140,
+            "RUN_STOP": 3,
+        }
+
+        if key not in key_codes:
+            return f"Unknown key: {key}"
+
+        code = key_codes[key]
+
+        # Wait for keyboard buffer to be empty
+        for _ in range(50):
+            resp = await client.get("/v1/machine:readmem", params={
+                "address": f"{KEYBUF_LEN_ADDR:02X}", "length": 1
+            })
+            resp.raise_for_status()
+            if resp.content[0] == 0:
+                break
+            await asyncio.sleep(0.1)
+
+        # Write key to keyboard buffer
+        resp = await client.post(
+            "/v1/machine:writemem",
+            params={"address": f"{KEYBUF_ADDR:04X}"},
+            content=bytes([code])
+        )
+        resp.raise_for_status()
+
+        # Set buffer length to 1
+        resp = await client.post(
+            "/v1/machine:writemem",
+            params={"address": f"{KEYBUF_LEN_ADDR:02X}"},
+            content=bytes([1])
+        )
+        resp.raise_for_status()
+
+        return f"Sent key: {key} (PETSCII ${code:02X})"
+
     # Drives
     elif name == "list_drives":
         resp = await client.get("/v1/drives")
@@ -1490,5 +1711,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    import asyncio
     asyncio.run(main())
