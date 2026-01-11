@@ -27,6 +27,12 @@ This skill enables creating and running BASIC programs on a Commodore 64 by writ
 
 5. **Inject keyboard commands**: Write "LIST" + CR + "RUN" + CR to keyboard buffer ($0277) and set count ($00C6)
 
+6. **In case of errors**: debug issue by
+   - running commodore64:capture_screen tool to capture screen and examine problem
+   - exposing program with keyboard command LIST or part of program with LIST stating first and last lines of program fragment and examining it with commodore64:capture_screen tool
+   - updating large parts of program directly using commodore64:write_memory
+   - exposing commands to keyboard buffer to make small updates and fixes
+
 ## Memory Structure Overview
 
 **BASIC Program Format:**
