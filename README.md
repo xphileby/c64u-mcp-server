@@ -105,39 +105,43 @@ Add to your Claude Desktop `claude_desktop_config.json`:
 - `create_d81` - Create D81 disk image
 - `create_dnp` - Create DNP disk image
 
-## Using the C64 BASIC Skill
+## Claude Skills
 
-The `C64_BASIC_SKILL.md` file contains instructions that teach Claude how to write tokenized BASIC programs directly to C64 memory. This enables Claude to create and run BASIC programs on your Commodore 64 via the MCP server.
+Skills are modular packages that extend Claude's capabilities with specialized knowledge. A `.skill` file is a ZIP archive containing:
+- `SKILL.md` - Core instructions with YAML frontmatter
+- `references/` - Optional detailed documentation
+- `scripts/` - Optional executable code
+- `assets/` - Optional templates and files
 
-### Setting Up the Skill in Claude Desktop
+### Creating a .skill File
 
-1. Open Claude Desktop settings
-2. Navigate to your project or create a new one
-3. Add `C64_BASIC_SKILL.md` as a project knowledge file:
-   - Click "Add Content" in your project
-   - Select "Add Files" and choose `C64_BASIC_SKILL.md` from the `c64u-mcp-server` directory
+1. Navigate to the skill folder:
+   ```bash
+   cd claude-skills/c64-basic
+   ```
 
-### Example Usage
+2. Create a ZIP archive with `.skill` extension (create archive using folder contents, not the folder itself to make sure SKILL.md file located in archive root):
+   ```bash
+   # Windows PowerShell
+   Compress-Archive -Path * -DestinationPath c64-basic.skill
+   
+   # Linux/Mac
+   zip -r c64-basic.skill *
+   ```
 
-Once configured, you can ask Claude to write BASIC programs:
+### Adding Skills to Claude Desktop
 
-```
-Write a BASIC program that changes the border color to red and background to black
-```
+1. Open Claude Desktop
+2. Go to **File → Settings → Capabilities → Skills**
+3. Click **Add** and select the `.skill` file
+4. The skill will be available in all conversations
 
-Claude will:
-1. Reset the C64
-2. Write the tokenized BASIC program to memory at $0801
-3. Update the BASIC pointers
-4. Inject LIST and RUN commands via the keyboard buffer
+### Available Skills
 
-### What the Skill Teaches Claude
-
-- C64 memory layout and BASIC program structure
-- BASIC token values (POKE = $97, GOTO = $89, etc.)
-- How to calculate line pointers correctly
-- Keyboard buffer injection for running programs
-- Common debugging tips for garbled listings or syntax errors
+**c64-basic** (`claude-skills/c64-basic/`)
+- Creates and runs C64 BASIC programs via MCP
+- Handles tokenization, memory pointers, and keyboard buffer injection
+- Trigger: Ask Claude to write C64 BASIC programs
 
 ## API Reference
 
