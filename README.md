@@ -32,7 +32,7 @@ Add to your Claude Desktop `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "c64u": {
+    "commodore64": {
       "command": "uv",
       "args": ["run", "--directory", "/path/to/c64u-mcp-server", "python", "server.py"],
       "env": {

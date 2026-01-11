@@ -139,30 +139,30 @@ $0817    00                             End of line
 
 ```
 1. Reset C64:
-   c64u-mcp-server:machine_reset
+   commodore64:machine_reset
 
 2. Write program to $0801:
-   c64u-mcp-server:write_memory
+   commodore64:write_memory
    address: "0801"
    data: "0F080A00972035333238302C300000001400892031300000"
 
 3. Set end-of-BASIC pointer ($002D-$002E):
-   c64u-mcp-server:write_memory
+   commodore64:write_memory
    address: "002D"
    data: "1808"
 
 4. Set start-of-variables pointer ($002F-$0030):
-   c64u-mcp-server:write_memory
+   commodore64:write_memory
    address: "002F"
    data: "1808"
 
 5. Inject "LIST" + CR + "RUN" + CR into keyboard buffer:
-   c64u-mcp-server:write_memory
+   commodore64:write_memory
    address: "0277"
    data: "4C4953540D52554E0D"
 
 6. Set keyboard buffer count to 9:
-   c64u-mcp-server:write_memory
+   commodore64:write_memory
    address: "00C6"
    data: "09"
 ```
