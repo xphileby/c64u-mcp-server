@@ -81,6 +81,9 @@ Add to your Claude Desktop `claude_desktop_config.json`:
 - `read_memory` - Read C64 memory
 - `read_debug_register` - Read debug register (U64)
 - `write_debug_register` - Write debug register (U64)
+- `capture_screen` - Capture C64 screen as PNG image
+- `type_text` - Type text into keyboard buffer (supports special keys)
+- `send_key` - Send a special key to keyboard buffer
 
 ### Floppy Drives
 - `list_drives` - List all drives and mounted images
