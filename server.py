@@ -17,6 +17,14 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent, ImageContent
 
+
+def decode_base64_data(data: str) -> bytes:
+    """Decode base64 data, handling both pure base64 and data URL formats."""
+    # Strip data URL prefix if present (e.g., "data:application/octet-stream;base64,...")
+    if data.startswith("data:"):
+        data = data.split(",", 1)[1]
+    return base64.b64decode(data)
+
 # C64 color palette (RGB values)
 C64_PALETTE = [
     (0, 0, 0),        # 0: Black
@@ -408,11 +416,11 @@ async def list_tools() -> list[Tool]:
         # Runners - SID
         Tool(
             name="sidplay_file",
-            description="Play a SID file from the device filesystem",
+            description="Play a SID file located on the Commodore 64 Ultimate filesystem",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "file": {"type": "string", "description": "Path to the SID file on the device"},
+                    "file": {"type": "string", "description": "Path to the SID file on the Commodore 64 Ultimate"},
                     "songnr": {"type": "integer", "description": "Song number to play (optional)"},
                 },
                 "required": ["file"],
@@ -420,11 +428,11 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="sidplay_upload",
-            description="Upload and play a SID file (base64 encoded)",
+            description="Upload and play a SID file (pure base64 or data URL encoded) from the Commodore 64 Ultimate filesystem",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "data": {"type": "string", "description": "Base64 encoded SID file data"},
+                    "data": {"type": "string", "description": "Base64 or data url encoded SID file data"},
                     "songnr": {"type": "integer", "description": "Song number to play (optional)"},
                 },
                 "required": ["data"],
@@ -434,22 +442,22 @@ async def list_tools() -> list[Tool]:
         # Runners - MOD
         Tool(
             name="modplay_file",
-            description="Play an Amiga MOD file from the device filesystem",
+            description="Play an Amiga MOD file located on the Commodore 64 Ultimate device filesystem",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "file": {"type": "string", "description": "Path to the MOD file on the device"},
+                    "file": {"type": "string", "description": "Path to the MOD file on the Commodore 64 Ultimate device"},
                 },
                 "required": ["file"],
             },
         ),
         Tool(
             name="modplay_upload",
-            description="Upload and play an Amiga MOD file (base64 encoded)",
+            description="Upload and play an Amiga MOD file (pure base64 or data URL encoded) from the Commodore 64 Ultimate filesystem",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "data": {"type": "string", "description": "Base64 encoded MOD file data"},
+                    "data": {"type": "string", "description": "Base64 or data URL encoded MOD file data"},
                 },
                 "required": ["data"],
             },
@@ -462,18 +470,18 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "file": {"type": "string", "description": "Path to the PRG file on the device"},
+                    "file": {"type": "string", "description": "Path to the PRG file on the Commodore 64 Ultimate device"},
                 },
                 "required": ["file"],
             },
         ),
         Tool(
             name="load_prg_upload",
-            description="Upload and load a program file without executing (base64 encoded)",
+            description="Upload and load a program file without executing (base64 or data URL encoded) from the Commodore 64 Ultimate filesystem",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "data": {"type": "string", "description": "Base64 encoded PRG file data"},
+                    "data": {"type": "string", "description": "Base64 or data URL encoded PRG file data"},
                 },
                 "required": ["data"],
             },
@@ -484,18 +492,18 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "file": {"type": "string", "description": "Path to the PRG file on the device"},
+                    "file": {"type": "string", "description": "Path to the PRG file on the Commodore 64 Ultimate device"},
                 },
                 "required": ["file"],
             },
         ),
         Tool(
             name="run_prg_upload",
-            description="Upload, load and execute a program file (base64 encoded)",
+            description="Upload, load and execute a program file (base64 or data URL encoded) on the Commodore 64 Ultimate",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "data": {"type": "string", "description": "Base64 encoded PRG file data"},
+                    "data": {"type": "string", "description": "Base64 or data URL encoded PRG file data"},
                 },
                 "required": ["data"],
             },
@@ -508,18 +516,18 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "file": {"type": "string", "description": "Path to the CRT file on the device"},
+                    "file": {"type": "string", "description": "Path to the CRT file on the Commodore 64 Ultimate device"},
                 },
                 "required": ["file"],
             },
         ),
         Tool(
             name="run_crt_upload",
-            description="Upload and start a cartridge file (base64 encoded)",
+            description="Upload and start a cartridge file (base64 or data URL encoded) on the Commodore 64 Ultimate",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "data": {"type": "string", "description": "Base64 encoded CRT file data"},
+                    "data": {"type": "string", "description": "Base64 or data URL encoded CRT file data"},
                 },
                 "required": ["data"],
             },
@@ -606,7 +614,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="machine_reboot",
-            description="Restart and reinitialize the Ultimate device",
+            description="Restart and reinitialize the Commodore 64 Ultimate device",
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
@@ -638,12 +646,12 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="write_memory_binary",
-            description="Write binary data to C64 memory via DMA (base64 encoded)",
+            description="Write binary data to C64 memory via DMA (base64 or data URL encoded)",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "address": {"type": "string", "description": "Memory address in hex (0000-ffff)"},
-                    "data": {"type": "string", "description": "Base64 encoded binary data"},
+                    "data": {"type": "string", "description": "Base64 or data URL encoded binary data"},
                 },
                 "required": ["address", "data"],
             },
@@ -745,7 +753,7 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "drive": {"type": "string", "description": "Drive identifier (e.g., 'a', 'b')"},
-                    "image": {"type": "string", "description": "Path to disk image on device"},
+                    "image": {"type": "string", "description": "Path to disk image on Commodore 64 Ultimate device"},
                     "type": {"type": "string", "description": "Disk type (optional)"},
                     "mode": {"type": "string", "description": "Mount mode (optional)"},
                 },
@@ -754,12 +762,12 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="mount_disk_upload",
-            description="Upload and mount a disk image (base64 encoded)",
+            description="Upload and mount a disk image (base64 or data URL encoded) on the Commodore 64 Ultimate",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "drive": {"type": "string", "description": "Drive identifier (e.g., 'a', 'b')"},
-                    "data": {"type": "string", "description": "Base64 encoded disk image data"},
+                    "data": {"type": "string", "description": "Base64 or data URL encoded disk image data"},
                     "type": {"type": "string", "description": "Disk type (optional)"},
                     "mode": {"type": "string", "description": "Mount mode (optional)"},
                 },
@@ -817,19 +825,19 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "drive": {"type": "string", "description": "Drive identifier (e.g., 'a', 'b')"},
-                    "file": {"type": "string", "description": "Path to ROM file on device"},
+                    "file": {"type": "string", "description": "Path to ROM file on Commodore 64 Ultimate device"},
                 },
                 "required": ["drive", "file"],
             },
         ),
         Tool(
             name="drive_load_rom_upload",
-            description="Upload and load custom ROM for drive (base64 encoded)",
+            description="Upload and load custom ROM for drive (base64 or data URL encoded) from the Commodore 64 Ultimate filesystem",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "drive": {"type": "string", "description": "Drive identifier (e.g., 'a', 'b')"},
-                    "data": {"type": "string", "description": "Base64 encoded ROM data"},
+                    "data": {"type": "string", "description": "Base64 or data URL encoded ROM data"},
                 },
                 "required": ["drive", "data"],
             },
@@ -875,11 +883,11 @@ async def list_tools() -> list[Tool]:
         # Files
         Tool(
             name="get_file_info",
-            description="Get metadata about a file on the device",
+            description="Get metadata about a file on the Commodore 64 Ultimate device",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Path to file on device"},
+                    "path": {"type": "string", "description": "Path to file on Commodore 64 Ultimate device"},
                 },
                 "required": ["path"],
             },
@@ -981,7 +989,7 @@ async def _handle_tool(client: httpx.AsyncClient, name: str, args: dict) -> str:
         return resp.text or "SID playback started"
 
     elif name == "sidplay_upload":
-        data = base64.b64decode(args["data"])
+        data = decode_base64_data(args["data"])
         params = {}
         if "songnr" in args:
             params["songnr"] = args["songnr"]
@@ -996,7 +1004,7 @@ async def _handle_tool(client: httpx.AsyncClient, name: str, args: dict) -> str:
         return resp.text or "MOD playback started"
 
     elif name == "modplay_upload":
-        data = base64.b64decode(args["data"])
+        data = decode_base64_data(args["data"])
         resp = await client.post("/v1/runners:modplay", content=data)
         resp.raise_for_status()
         return resp.text or "MOD playback started"
@@ -1008,7 +1016,7 @@ async def _handle_tool(client: httpx.AsyncClient, name: str, args: dict) -> str:
         return resp.text or "Program loaded"
 
     elif name == "load_prg_upload":
-        data = base64.b64decode(args["data"])
+        data = decode_base64_data(args["data"])
         resp = await client.post("/v1/runners:load_prg", content=data)
         resp.raise_for_status()
         return resp.text or "Program loaded"
@@ -1019,7 +1027,7 @@ async def _handle_tool(client: httpx.AsyncClient, name: str, args: dict) -> str:
         return resp.text or "Program running"
 
     elif name == "run_prg_upload":
-        data = base64.b64decode(args["data"])
+        data = decode_base64_data(args["data"])
         resp = await client.post("/v1/runners:run_prg", content=data)
         resp.raise_for_status()
         return resp.text or "Program running"
@@ -1031,7 +1039,7 @@ async def _handle_tool(client: httpx.AsyncClient, name: str, args: dict) -> str:
         return resp.text or "Cartridge started"
 
     elif name == "run_crt_upload":
-        data = base64.b64decode(args["data"])
+        data = decode_base64_data(args["data"])
         resp = await client.post("/v1/runners:run_crt", content=data)
         resp.raise_for_status()
         return resp.text or "Cartridge started"
@@ -1117,7 +1125,7 @@ async def _handle_tool(client: httpx.AsyncClient, name: str, args: dict) -> str:
         return resp.text or f"Wrote {len(data)} bytes to ${args['address']}"
 
     elif name == "write_memory_binary":
-        data = base64.b64decode(args["data"])
+        data = decode_base64_data(args["data"])
         resp = await client.post(
             "/v1/machine:writemem",
             params={"address": args["address"]},
@@ -1579,7 +1587,7 @@ async def _handle_tool(client: httpx.AsyncClient, name: str, args: dict) -> str:
         return resp.text or f"Disk mounted on drive {args['drive']}"
 
     elif name == "mount_disk_upload":
-        data = base64.b64decode(args["data"])
+        data = decode_base64_data(args["data"])
         params = {}
         if "type" in args:
             params["type"] = args["type"]
@@ -1622,7 +1630,7 @@ async def _handle_tool(client: httpx.AsyncClient, name: str, args: dict) -> str:
         return resp.text or f"ROM loaded for drive {args['drive']}"
 
     elif name == "drive_load_rom_upload":
-        data = base64.b64decode(args["data"])
+        data = decode_base64_data(args["data"])
         resp = await client.post(
             f"/v1/drives/{args['drive']}:load_rom",
             content=data
