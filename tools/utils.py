@@ -1,4 +1,5 @@
 import base64
+import re
 
 from tools.c64_data import SPECIAL_KEYS
 

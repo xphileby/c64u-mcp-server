@@ -84,6 +84,7 @@ Add to your Claude Desktop `claude_desktop_config.json`:
 - `capture_screen` - Capture C64 screen as PNG image
 - `type_text` - Type text into keyboard buffer (supports special keys)
 - `send_key` - Send a special key to keyboard buffer
+- `enter_basic_program` - Enter BASIC program directly into memory (tokenized)
 
 ### Floppy Drives
 - `list_drives` - List all drives and mounted images
@@ -107,44 +108,6 @@ Add to your Claude Desktop `claude_desktop_config.json`:
 - `create_d71` - Create D71 disk image
 - `create_d81` - Create D81 disk image
 - `create_dnp` - Create DNP disk image
-
-## Claude Skills
-
-Skills are modular packages that extend Claude's capabilities with specialized knowledge. A `.skill` file is a ZIP archive containing:
-- `SKILL.md` - Core instructions with YAML frontmatter
-- `references/` - Optional detailed documentation
-- `scripts/` - Optional executable code
-- `assets/` - Optional templates and files
-
-### Creating a .skill File
-
-1. Navigate to the skill folder:
-   ```bash
-   cd claude-skills/c64-basic
-   ```
-
-2. Create a ZIP archive with `.skill` extension (create archive using folder contents, not the folder itself to make sure SKILL.md file located in archive root):
-   ```bash
-   # Windows PowerShell
-   Compress-Archive -Path * -DestinationPath c64-basic.skill
-   
-   # Linux/Mac
-   zip -r c64-basic.skill *
-   ```
-
-### Adding Skills to Claude Desktop
-
-1. Open Claude Desktop
-2. Go to **File → Settings → Capabilities → Skills**
-3. Click **Add** and select the `.skill` file
-4. The skill will be available in all conversations
-
-### Available Skills
-
-**c64-basic** (`claude-skills/c64-basic/`)
-- Creates and runs C64 BASIC programs via MCP
-- Handles tokenization, memory pointers, and keyboard buffer injection
-- Trigger: Ask Claude to write C64 BASIC programs
 
 ## API Reference
 

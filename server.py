@@ -14,6 +14,7 @@ from mcp.types import Tool, TextContent, ImageContent
 from tools.utils import *
 from tools.c64_data import *
 from tools.screen import capture_screen_logic
+from tools.basic_tokenizer import basic_to_bytes, get_program_end_address, BASIC_START
 
 
 # API base URL - configurable via environment variable
@@ -363,6 +364,24 @@ async def list_tools() -> list[Tool]:
                     },
                 },
                 "required": ["key"],
+            },
+        ),
+        Tool(
+            name="enter_basic_program",
+            description="Enter a BASIC program directly into C64 memory. Takes BASIC source code text, tokenizes it, and writes it to memory at $0801. Updates BASIC pointers so the program is ready to LIST or RUN. Each line must have a line number (e.g., '10 PRINT \"HELLO\"'). Keywords are automatically tokenized. Use NEW on the C64 first to clear any existing program.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "program": {
+                        "type": "string",
+                        "description": "BASIC program source code. Each line must start with a line number (0-63999). Lines are separated by newlines. Example: '10 PRINT \"HELLO\"\\n20 GOTO 10'",
+                    },
+                    "auto_run": {
+                        "type": "boolean",
+                        "description": "If true, automatically type RUN after entering the program (default: false)",
+                    },
+                },
+                "required": ["program"],
             },
         ),
 
@@ -897,6 +916,101 @@ async def _handle_tool(client: httpx.AsyncClient, name: str, args: dict) -> str:
         resp.raise_for_status()
 
         return f"Sent key: {key} (PETSCII ${code:02X})"
+
+    elif name == "enter_basic_program":
+        program = args["program"]
+        auto_run = args.get("auto_run", False)
+
+        try:
+            # Tokenize the BASIC program
+            program_bytes = basic_to_bytes(program)
+            end_addr = get_program_end_address(program_bytes, BASIC_START)
+        except ValueError as e:
+            return f"Error tokenizing program: {e}"
+
+        # Write program to memory at $0801
+        resp = await client.post(
+            "/v1/machine:writemem",
+            params={"address": f"{BASIC_START:04X}"},
+            content=program_bytes
+        )
+        resp.raise_for_status()
+
+        # Update BASIC pointers
+        # $2B-$2C: Start of BASIC (should already be $0801, but set it anyway)
+        # $2D-$2E: Start of variables (end of program)
+        # $2F-$30: Start of arrays (same as variables initially)
+        # $31-$32: End of arrays (same as variables initially)
+        # $33-$34: Bottom of strings (same as variables initially)
+
+        # Set start of BASIC ($2B-$2C) to $0801
+        resp = await client.post(
+            "/v1/machine:writemem",
+            params={"address": "2B"},
+            content=bytes([BASIC_START & 0xFF, (BASIC_START >> 8) & 0xFF])
+        )
+        resp.raise_for_status()
+
+        # Set start of variables ($2D-$2E) to end of program
+        resp = await client.post(
+            "/v1/machine:writemem",
+            params={"address": "2D"},
+            content=bytes([end_addr & 0xFF, (end_addr >> 8) & 0xFF])
+        )
+        resp.raise_for_status()
+
+        # Set start of arrays ($2F-$30) to end of program
+        resp = await client.post(
+            "/v1/machine:writemem",
+            params={"address": "2F"},
+            content=bytes([end_addr & 0xFF, (end_addr >> 8) & 0xFF])
+        )
+        resp.raise_for_status()
+
+        # Set end of arrays ($31-$32) to end of program
+        resp = await client.post(
+            "/v1/machine:writemem",
+            params={"address": "31"},
+            content=bytes([end_addr & 0xFF, (end_addr >> 8) & 0xFF])
+        )
+        resp.raise_for_status()
+
+        result_msg = f"BASIC program entered: {len(program_bytes)} bytes at ${BASIC_START:04X}-${end_addr-1:04X}"
+
+        # Auto-run if requested
+        if auto_run:
+            # Type RUN and RETURN
+            run_cmd = ascii_to_petscii("RUN{RETURN}")
+
+            # Wait for keyboard buffer to be empty
+            for _ in range(50):
+                resp = await client.get("/v1/machine:readmem", params={
+                    "address": f"{KEYBUF_LEN_ADDR:02X}", "length": 1
+                })
+                resp.raise_for_status()
+                if resp.content[0] == 0:
+                    break
+                await asyncio.sleep(0.1)
+
+            # Write RUN command to keyboard buffer
+            resp = await client.post(
+                "/v1/machine:writemem",
+                params={"address": f"{KEYBUF_ADDR:04X}"},
+                content=run_cmd
+            )
+            resp.raise_for_status()
+
+            # Set buffer length
+            resp = await client.post(
+                "/v1/machine:writemem",
+                params={"address": f"{KEYBUF_LEN_ADDR:02X}"},
+                content=bytes([len(run_cmd)])
+            )
+            resp.raise_for_status()
+
+            result_msg += " - RUN command sent"
+
+        return result_msg
 
     # Drives
     elif name == "list_drives":
