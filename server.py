@@ -14,6 +14,7 @@ from mcp.types import Tool, TextContent, ImageContent
 from tools.utils import *
 from tools.c64_data import *
 from tools.screen import capture_screen_logic
+from tools.keyboard import type_text_logic, send_key_logic
 from tools.basic_tokenizer import basic_to_bytes, get_program_end_address, BASIC_START
 
 
@@ -808,114 +809,11 @@ async def _handle_tool(client: httpx.AsyncClient, name: str, args: dict) -> str:
     elif name == "type_text":
         text = args["text"]
         wait_ms = args.get("wait_ms", 100)
-
-        # Convert text to PETSCII
-        petscii_bytes = ascii_to_petscii(text)
-
-        if len(petscii_bytes) == 0:
-            return "No valid characters to type"
-
-        # Process in chunks of KEYBUF_MAX_SIZE (10 characters)
-        total_typed = 0
-        for i in range(0, len(petscii_bytes), KEYBUF_MAX_SIZE):
-            chunk = petscii_bytes[i:i + KEYBUF_MAX_SIZE]
-            chunk_len = len(chunk)
-
-            # Wait for keyboard buffer to be empty before writing
-            for _ in range(50):  # Max 50 attempts (5 seconds)
-                resp = await client.get("/v1/machine:readmem", params={
-                    "address": f"{KEYBUF_LEN_ADDR:02X}", "length": 1
-                })
-                resp.raise_for_status()
-                if resp.content[0] == 0:
-                    break
-                await asyncio.sleep(0.1)
-
-            # Write characters to keyboard buffer
-            resp = await client.post(
-                "/v1/machine:writemem",
-                params={"address": f"{KEYBUF_ADDR:04X}"},
-                content=chunk
-            )
-            resp.raise_for_status()
-
-            # Set buffer length
-            resp = await client.post(
-                "/v1/machine:writemem",
-                params={"address": f"{KEYBUF_LEN_ADDR:02X}"},
-                content=bytes([chunk_len])
-            )
-            resp.raise_for_status()
-
-            total_typed += chunk_len
-
-            # Wait for processing if more chunks to come
-            if i + KEYBUF_MAX_SIZE < len(petscii_bytes):
-                await asyncio.sleep(wait_ms / 1000.0)
-
-        # Final wait for buffer processing
-        if wait_ms > 0:
-            await asyncio.sleep(wait_ms / 1000.0)
-
-        return f"Typed {total_typed} characters"
+        return await type_text_logic(client, text, wait_ms)
 
     elif name == "send_key":
         key = args["key"]
-
-        # Map key names to PETSCII codes
-        key_codes = {
-            "RETURN": 13,
-            "HOME": 19,
-            "CLR": 147,
-            "DEL": 20,
-            "INS": 148,
-            "UP": 145,
-            "DOWN": 17,
-            "LEFT": 157,
-            "RIGHT": 29,
-            "F1": 133,
-            "F2": 137,
-            "F3": 134,
-            "F4": 138,
-            "F5": 135,
-            "F6": 139,
-            "F7": 136,
-            "F8": 140,
-            "RUN_STOP": 3,
-        }
-
-        if key not in key_codes:
-            return f"Unknown key: {key}"
-
-        code = key_codes[key]
-
-        # Wait for keyboard buffer to be empty
-        for _ in range(50):
-            resp = await client.get("/v1/machine:readmem", params={
-                "address": f"{KEYBUF_LEN_ADDR:02X}", "length": 1
-            })
-            resp.raise_for_status()
-            if resp.content[0] == 0:
-                break
-            await asyncio.sleep(0.1)
-
-        # Write key to keyboard buffer
-        resp = await client.post(
-            "/v1/machine:writemem",
-            params={"address": f"{KEYBUF_ADDR:04X}"},
-            content=bytes([code])
-        )
-        resp.raise_for_status()
-
-        # Set buffer length to 1
-        resp = await client.post(
-            "/v1/machine:writemem",
-            params={"address": f"{KEYBUF_LEN_ADDR:02X}"},
-            content=bytes([1])
-        )
-        resp.raise_for_status()
-
-        return f"Sent key: {key} (PETSCII ${code:02X})"
+        return await send_key_logic(client, key)
 
     elif name == "enter_basic_program":
         program = args["program"]
@@ -980,34 +878,7 @@ async def _handle_tool(client: httpx.AsyncClient, name: str, args: dict) -> str:
         # Auto-run if requested
         if auto_run:
             # Type RUN and RETURN
-            run_cmd = ascii_to_petscii("RUN{RETURN}")
-
-            # Wait for keyboard buffer to be empty
-            for _ in range(50):
-                resp = await client.get("/v1/machine:readmem", params={
-                    "address": f"{KEYBUF_LEN_ADDR:02X}", "length": 1
-                })
-                resp.raise_for_status()
-                if resp.content[0] == 0:
-                    break
-                await asyncio.sleep(0.1)
-
-            # Write RUN command to keyboard buffer
-            resp = await client.post(
-                "/v1/machine:writemem",
-                params={"address": f"{KEYBUF_ADDR:04X}"},
-                content=run_cmd
-            )
-            resp.raise_for_status()
-
-            # Set buffer length
-            resp = await client.post(
-                "/v1/machine:writemem",
-                params={"address": f"{KEYBUF_LEN_ADDR:02X}"},
-                content=bytes([len(run_cmd)])
-            )
-            resp.raise_for_status()
-
+            await type_text_logic(client, "RUN{RETURN}", wait_ms=0)
             result_msg += " - RUN command sent"
 
         return result_msg
