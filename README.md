@@ -2,6 +2,10 @@
 
 MCP (Model Context Protocol) server for the Commodore 64 Ultimate Computer REST API. This server exposes all Commodore 64 Ultimate Computer REST API endpoints as MCP tools.
 
+## Prerequisites
+
+Enable **Network Services** from the Commodore 64 Ultimate menu: Network Services & Timezone -> Web Remote Control Service -> Enabled
+
 ## Installation
 
 ```bash
