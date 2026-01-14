@@ -1,10 +1,35 @@
-# Commodore 64 Ultimate Computer MCP Server
+# Commodore 64 Ultimate MCP Server
 
-MCP (Model Context Protocol) server for the Commodore 64 Ultimate Computer REST API. This server exposes all Commodore 64 Ultimate Computer REST API endpoints as MCP tools.
+Control your Commodore 64 Ultimate device with AI. This MCP server lets Claude and other AI assistants interact with your C64 Ultimate hardware over your local network.
+
+## What Can You Do?
+
+**Create and Debug Programs** - Claude can write C64 BASIC or machine code programs, run them, capture the screen to see the results, inspect memory, and iteratively fix issues. Describe what you want and watch Claude develop it on real hardware.
+
+**Write and Run BASIC Programs** - Ask Claude to write a BASIC program and it will tokenize the code, inject it directly into C64 memory, and run it. No typing required.
+
+**Play Classic Games and Demos** - Load and run .PRG programs or .CRT cartridge images from your device's storage or upload them directly.
+
+**Listen to SID Music** - Play classic C64 SID tunes or Amiga MOD tracker files. Just point to a file on your device or upload one.
+
+**See What's on Screen** - Capture screenshots from any graphics mode: text, multicolor, hires bitmap, and more. Claude can see what's happening and respond accordingly.
+
+**Type and Control** - Send keystrokes, navigate menus, and interact with running programs through the keyboard buffer.
+
+**Manage Floppy Drives** - Mount and unmount D64/D71/D81 disk images, switch between 1541/1571/1581 emulation modes, and create new disk images.
+
+**Read and Write Memory** - Inspect and modify C64 memory directly via DMA. Useful for debugging, poking values, or examining program state.
+
+**Configure Your Device** - Adjust device settings, save configurations to flash, and manage your C64 Ultimate setup.
+
+## How It Works
+
+This server implements the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) to expose the C64 Ultimate REST API as tools that AI assistants can use. When connected to Claude Desktop or another MCP client, you can have natural conversations about your C64 and Claude will use these tools to carry out your requests.
 
 ## Prerequisites
 
-Enable **Network Services** from the Commodore 64 Ultimate menu: Network Services & Timezone -> Web Remote Control Service -> Enabled
+Enable **Web Remote Control Service** from the C64 Ultimate menu:
+- Navigate to: `Network Settings` → `Web Remote Control Service` → `Enabled`
 
 ## Installation
 
@@ -49,8 +74,23 @@ Add to your Claude Desktop `claude_desktop_config.json`:
 
 ## Available Tools
 
-### About
-- `get_version` - Get REST API version
+### Machine Control
+- `machine_reset` - Reset the C64
+- `machine_reboot` - Reboot Ultimate device
+- `machine_pause` - Pause CPU via DMA
+- `machine_resume` - Resume from pause
+- `machine_poweroff` - Power off (U64 only)
+- `capture_screen` - Capture C64 screen as PNG image
+- `type_text` - Type text into keyboard buffer (supports special keys)
+- `send_key` - Send a special key to keyboard buffer
+- `enter_basic_program` - Enter BASIC program directly into memory (tokenized)
+
+### Memory Access
+- `write_memory` - Write hex data to C64 memory
+- `write_memory_binary` - Write binary data to memory (base64)
+- `read_memory` - Read C64 memory
+- `read_debug_register` - Read debug register (U64)
+- `write_debug_register` - Write debug register (U64)
 
 ### Runners (SID/MOD/PRG/CRT)
 - `sidplay_file` - Play SID file from device filesystem
@@ -64,32 +104,6 @@ Add to your Claude Desktop `claude_desktop_config.json`:
 - `run_crt_file` - Start cartridge from filesystem
 - `run_crt_upload` - Upload and start cartridge (base64)
 
-### Configuration
-- `list_config_categories` - List all config categories
-- `get_config_category` - Get items in a category
-- `get_config_item` - Get specific config item
-- `set_config_item` - Set config item value
-- `batch_set_config` - Set multiple config items
-- `load_config_from_flash` - Restore config from flash
-- `save_config_to_flash` - Save config to flash
-- `reset_config_to_default` - Reset to factory defaults
-
-### Machine Control
-- `machine_reset` - Reset the C64
-- `machine_reboot` - Reboot Ultimate device
-- `machine_pause` - Pause CPU via DMA
-- `machine_resume` - Resume from pause
-- `machine_poweroff` - Power off (U64 only)
-- `write_memory` - Write hex data to C64 memory
-- `write_memory_binary` - Write binary data to memory (base64)
-- `read_memory` - Read C64 memory
-- `read_debug_register` - Read debug register (U64)
-- `write_debug_register` - Write debug register (U64)
-- `capture_screen` - Capture C64 screen as PNG image
-- `type_text` - Type text into keyboard buffer (supports special keys)
-- `send_key` - Send a special key to keyboard buffer
-- `enter_basic_program` - Enter BASIC program directly into memory (tokenized)
-
 ### Floppy Drives
 - `list_drives` - List all drives and mounted images
 - `mount_disk_file` - Mount disk from filesystem
@@ -102,12 +116,23 @@ Add to your Claude Desktop `claude_desktop_config.json`:
 - `drive_load_rom_upload` - Upload custom ROM (base64)
 - `drive_set_mode` - Change drive type (1541/1571/1581)
 
+### Configuration
+- `list_config_categories` - List all config categories
+- `get_config_category` - Get items in a category
+- `get_config_item` - Get specific config item
+- `set_config_item` - Set config item value
+- `batch_set_config` - Set multiple config items
+- `load_config_from_flash` - Restore config from flash
+- `save_config_to_flash` - Save config to flash
+- `reset_config_to_default` - Reset to factory defaults
+
 ### Streams (U64 only)
 - `stream_start` - Start video/audio/debug stream
 - `stream_stop` - Stop active stream
 
 ### File Operations
 - `get_file_info` - Get file metadata
+- `get_version` - Get REST API version
 - `create_d64` - Create D64 disk image
 - `create_d71` - Create D71 disk image
 - `create_d81` - Create D81 disk image
