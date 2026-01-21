@@ -6,14 +6,22 @@ device via its REST API.
 """
 
 import asyncio
+import json
 import os
 import httpx
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent, ImageContent
+from mcp.types import Tool, TextContent, ImageContent, Prompt, PromptMessage, GetPromptResult
 from tools.utils import *
 from tools.c64_data import *
-from tools.screen import capture_screen_logic
+from tools.screen import (
+    capture_screen_logic,
+    capture_screen_with_mode_logic,
+    capture_all_screen_modes_logic,
+    detect_screen_mode_logic,
+    ScreenMode,
+    VALID_SCREEN_MODES,
+)
 from tools.keyboard import type_text_logic, send_key_logic
 from tools.basic_tokenizer import basic_to_bytes, get_program_end_address, BASIC_START
 
@@ -333,6 +341,60 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="get_screen_mode",
+            description="Detect and return the currently active C64 screen mode. Returns the mode enum value, display name, and memory addresses (VIC bank, screen RAM, character/bitmap RAM).",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        ),
+        Tool(
+            name="capture_screen_with_mode",
+            description="Capture the C64 screen using an explicit screen mode, ignoring the active VIC-II mode. Useful when auto-detection may not match the expected rendering.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "description": "Screen mode to use for rendering",
+                        "enum": [m.value for m in VALID_SCREEN_MODES],
+                    },
+                    "scale": {
+                        "type": "integer",
+                        "description": "Scale factor for the output image (1-4, default: 2)",
+                        "minimum": 1,
+                        "maximum": 4,
+                    },
+                    "include_border": {
+                        "type": "boolean",
+                        "description": "Include the border area in the screenshot (default: true)",
+                    },
+                },
+                "required": ["mode"],
+            },
+        ),
+        Tool(
+            name="capture_all_screen_modes",
+            description="Capture screenshots for all valid C64 screen modes at once. Returns multiple images, one for each mode (standard_text, multicolor_text, extended_bg_color, standard_bitmap, multicolor_bitmap). Useful for debugging or when the active mode is uncertain.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "scale": {
+                        "type": "integer",
+                        "description": "Scale factor for the output images (1-4, default: 2)",
+                        "minimum": 1,
+                        "maximum": 4,
+                    },
+                    "include_border": {
+                        "type": "boolean",
+                        "description": "Include the border area in the screenshots (default: true)",
+                    },
+                },
+                "required": [],
+            },
+        ),
+        Tool(
             name="type_text",
             description="Type text into the C64 keyboard buffer. Converts ASCII to PETSCII and writes to the keyboard buffer at $0277. The C64 will process these keystrokes. Automatically handles text longer than 10 chars by chunking. Use {RETURN} for newline, {CLR} to clear screen, {HOME} for home, {UP}/{DOWN}/{LEFT}/{RIGHT} for cursor, {F1}-{F8} for function keys, {DEL}/{INS} for delete/insert.",
             inputSchema={
@@ -592,6 +654,55 @@ async def list_tools() -> list[Tool]:
 
 
 # ============================================================================
+# Prompts
+# ============================================================================
+
+SCREEN_CAPTURE_PROMPT = """When capturing the C64 screen:
+
+1. First use `capture_screen` which auto-detects the active graphics mode
+2. If the captured image shows visual artifacts, garbled graphics, or doesn't look correct, the auto-detected mode may be wrong
+3. In that case, use `capture_all_screen_modes` to capture the screen in all 5 valid modes at once:
+   - standard_text (40x25 characters)
+   - multicolor_text (40x25 with multicolor characters)
+   - extended_bg_color (40x25 with 4 background colors)
+   - standard_bitmap (320x200 hires)
+   - multicolor_bitmap (160x200 multicolor)
+4. Compare the results to find which mode renders correctly
+5. Once you identify the correct mode, use `capture_screen_with_mode` with that specific mode for subsequent captures
+
+Common causes of mode detection issues:
+- Programs that use raster interrupts to switch modes mid-screen
+- Custom VIC-II configurations
+- Programs that haven't fully initialized the display yet"""
+
+
+@server.list_prompts()
+async def list_prompts() -> list[Prompt]:
+    """Return list of available prompts."""
+    return [
+        Prompt(
+            name="screen_capture_guide",
+            description="Guide for capturing C64 screen with troubleshooting tips for visual artifacts",
+        ),
+    ]
+
+
+@server.get_prompt()
+async def get_prompt(name: str, arguments: dict | None = None) -> GetPromptResult:
+    """Return a specific prompt."""
+    if name == "screen_capture_guide":
+        return GetPromptResult(
+            messages=[
+                PromptMessage(
+                    role="user",
+                    content=TextContent(type="text", text=SCREEN_CAPTURE_PROMPT),
+                )
+            ]
+        )
+    raise ValueError(f"Unknown prompt: {name}")
+
+
+# ============================================================================
 # Tool Handlers
 # ============================================================================
 
@@ -601,7 +712,15 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent | ImageConte
     async with get_client() as client:
         try:
             result = await _handle_tool(client, name, arguments)
-            # Handle image responses
+            # Handle multiple image responses (e.g., capture_all_screen_modes)
+            if isinstance(result, list):
+                contents = []
+                for item in result:
+                    if isinstance(item, dict) and item.get("type") == "image":
+                        contents.append(TextContent(type="text", text=item.get("info", "")))
+                        contents.append(ImageContent(type="image", data=item["data"], mimeType=item["mimeType"]))
+                return contents if contents else [TextContent(type="text", text="No results")]
+            # Handle single image response
             if isinstance(result, dict) and result.get("type") == "image":
                 return [
                     TextContent(type="text", text=result.get("info", "")),
@@ -805,6 +924,25 @@ async def _handle_tool(client: httpx.AsyncClient, name: str, args: dict) -> str:
         scale = args.get("scale", 4)
         include_border = args.get("include_border", True)
         return await capture_screen_logic(client, scale, include_border)
+
+    elif name == "get_screen_mode":
+        mode_info = await detect_screen_mode_logic(client)
+        return json.dumps(mode_info, indent=2)
+
+    elif name == "capture_screen_with_mode":
+        mode_str = args["mode"]
+        try:
+            mode = ScreenMode(mode_str)
+        except ValueError:
+            return f"Invalid screen mode: {mode_str}. Valid modes: {[m.value for m in VALID_SCREEN_MODES]}"
+        scale = args.get("scale", 2)
+        include_border = args.get("include_border", True)
+        return await capture_screen_with_mode_logic(client, mode, scale, include_border)
+
+    elif name == "capture_all_screen_modes":
+        scale = args.get("scale", 2)
+        include_border = args.get("include_border", True)
+        return await capture_all_screen_modes_logic(client, scale, include_border)
 
     elif name == "type_text":
         text = args["text"]
