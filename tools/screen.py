@@ -113,8 +113,9 @@ async def read_vic_state(client: httpx.AsyncClient) -> dict:
 
 async def detect_screen_mode_logic(client: httpx.AsyncClient) -> dict:
     """
-    Detect the active C64 screen mode.
+    Detect the active C64 screen mode and memory configuration.
     Returns mode info including enum value, display name, and memory addresses.
+    Properly handles custom screen memory allocation (non-$0400 screen addresses).
     """
     await client.put("/v1/machine:pause")
     try:
@@ -123,14 +124,59 @@ async def detect_screen_mode_logic(client: httpx.AsyncClient) -> dict:
         await client.put("/v1/machine:resume")
 
     mode = vic_state["mode"]
-    return {
+    vic_bank = vic_state["vic_bank"]
+    screen_addr = vic_state["screen_addr"]
+    char_addr = vic_state["char_addr"]
+    bitmap_addr = vic_state["bitmap_addr"]
+    cia2_pra = vic_state["cia2_pra"]
+    d018 = vic_state["d018"]
+
+    # Determine VIC bank number (0-3)
+    vic_bank_num = 3 - (cia2_pra & 0x03)
+
+    # Check if using standard BASIC screen at $0400
+    is_standard_screen = (screen_addr == 0x0400)
+
+    # Calculate screen offset within VIC bank
+    screen_offset = ((d018 >> 4) & 0x0F) * 0x0400
+
+    # Build memory layout description
+    vic_bank_range = f"${vic_bank:04X}-${vic_bank + 0x3FFF:04X}"
+
+    result = {
         "mode": mode.value,
         "mode_name": mode.display_name,
-        "vic_bank": f"${vic_state['vic_bank']:04X}",
-        "screen_addr": f"${vic_state['screen_addr']:04X}",
-        "char_addr": f"${vic_state['char_addr']:04X}" if not vic_state["bmm"] else None,
-        "bitmap_addr": f"${vic_state['bitmap_addr']:04X}" if vic_state["bmm"] else None,
+        "memory_config": {
+            "vic_bank": vic_bank_num,
+            "vic_bank_range": vic_bank_range,
+            "screen_addr": f"${screen_addr:04X}",
+            "screen_offset_in_bank": f"${screen_offset:04X}",
+            "is_standard_screen": is_standard_screen,
+        },
+        "registers": {
+            "d018": f"${d018:02X}",
+            "dd00": f"${cia2_pra:02X}",
+        },
     }
+
+    if vic_state["bmm"]:
+        result["memory_config"]["bitmap_addr"] = f"${bitmap_addr:04X}"
+    else:
+        result["memory_config"]["char_addr"] = f"${char_addr:04X}"
+        result["memory_config"]["uses_rom_charset"] = (
+            (cia2_pra & 0x03) in [0x03, 0x01] and
+            vic_state["char_offset"] == 0x1000
+        )
+
+    # Add note if using non-standard configuration
+    if not is_standard_screen:
+        result["note"] = (
+            f"Custom screen memory at ${screen_addr:04X} "
+            f"(VIC bank {vic_bank_num}, offset ${screen_offset:04X}). "
+            "This is common in demos, games, and tools like TASM."
+        )
+
+    return result
 
 
 async def capture_screen_logic(client: httpx.AsyncClient, scale: int = 2, include_border: bool = True):

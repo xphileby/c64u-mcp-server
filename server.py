@@ -342,7 +342,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="get_screen_mode",
-            description="Detect and return the currently active C64 screen mode. Returns the mode enum value, display name, and memory addresses (VIC bank, screen RAM, character/bitmap RAM).",
+            description="Detect and return the currently active C64 screen mode and memory configuration. Reads CIA2 ($DD00) and VIC register ($D018) to properly detect custom screen memory locations (not just standard $0400). Returns mode enum, VIC bank info, screen/char/bitmap addresses, and flags for non-standard configurations used by demos, games, and tools like TASM.",
             inputSchema={
                 "type": "object",
                 "properties": {},
