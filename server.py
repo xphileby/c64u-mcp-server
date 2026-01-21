@@ -17,6 +17,7 @@ from tools.c64_data import *
 from tools.screen import (
     capture_screen_logic,
     capture_screen_with_mode_logic,
+    capture_screen_with_config_logic,
     capture_all_screen_modes_logic,
     detect_screen_mode_logic,
     ScreenMode,
@@ -395,6 +396,43 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="capture_screen_with_config",
+            description="Capture the C64 screen using explicit mode AND memory addresses. Bypasses VIC-II register detection entirely. Use this for programs with custom screen memory layouts (like TASM at $0800) or when auto-detection fails.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "description": "Screen mode to use for rendering",
+                        "enum": [m.value for m in VALID_SCREEN_MODES],
+                    },
+                    "screen_addr": {
+                        "type": "string",
+                        "description": "Screen RAM address in hex (1KB aligned: 0400, 0800, 0C00, 1000, etc.)",
+                    },
+                    "char_addr": {
+                        "type": "string",
+                        "description": "Character RAM address in hex for text modes (2KB aligned: 1000, 1800, 2000, etc.). Omit to use ROM charset.",
+                    },
+                    "bitmap_addr": {
+                        "type": "string",
+                        "description": "Bitmap address in hex for bitmap modes (8KB aligned: 0000, 2000, 4000, etc.). Default: 2000",
+                    },
+                    "scale": {
+                        "type": "integer",
+                        "description": "Scale factor for the output image (1-4, default: 2)",
+                        "minimum": 1,
+                        "maximum": 4,
+                    },
+                    "include_border": {
+                        "type": "boolean",
+                        "description": "Include the border area in the screenshot (default: true)",
+                    },
+                },
+                "required": ["mode", "screen_addr"],
+            },
+        ),
+        Tool(
             name="type_text",
             description="Type text into the C64 keyboard buffer. Converts ASCII to PETSCII and writes to the keyboard buffer at $0277. The C64 will process these keystrokes. Automatically handles text longer than 10 chars by chunking. Use {RETURN} for newline, {CLR} to clear screen, {HOME} for home, {UP}/{DOWN}/{LEFT}/{RIGHT} for cursor, {F1}-{F8} for function keys, {DEL}/{INS} for delete/insert.",
             inputSchema={
@@ -659,20 +697,37 @@ async def list_tools() -> list[Tool]:
 
 SCREEN_CAPTURE_PROMPT = """When capturing the C64 screen:
 
-1. First use `capture_screen` which auto-detects the active graphics mode
-2. If the captured image shows visual artifacts, garbled graphics, or doesn't look correct, the auto-detected mode may be wrong
-3. In that case, use `capture_all_screen_modes` to capture the screen in all 5 valid modes at once:
+1. First use `capture_screen` which auto-detects the active graphics mode and memory layout
+2. If the captured image shows visual artifacts, garbled graphics, or doesn't look correct:
+   a. The auto-detected MODE may be wrong, OR
+   b. The program uses CUSTOM SCREEN MEMORY (not standard $0400)
+
+3. To diagnose, use `get_screen_mode` to see the detected configuration:
+   - Check `is_standard_screen` - if false, program uses custom memory like TASM ($0800)
+   - Note the `screen_addr`, `char_addr`, and register values
+
+4. If mode detection seems wrong, use `capture_all_screen_modes` to capture all 5 modes at once:
    - standard_text (40x25 characters)
    - multicolor_text (40x25 with multicolor characters)
    - extended_bg_color (40x25 with 4 background colors)
    - standard_bitmap (320x200 hires)
    - multicolor_bitmap (160x200 multicolor)
-4. Compare the results to find which mode renders correctly
-5. Once you identify the correct mode, use `capture_screen_with_mode` with that specific mode for subsequent captures
 
-Common causes of mode detection issues:
-- Programs that use raster interrupts to switch modes mid-screen
-- Custom VIC-II configurations
+5. Once you identify the correct mode, use `capture_screen_with_mode` for subsequent captures
+
+6. If auto-detection of memory addresses fails (even with correct mode), use `capture_screen_with_config`
+   to specify BOTH mode AND memory addresses explicitly:
+   - screen_addr: Screen RAM location (hex, e.g., "0800" for TASM)
+   - char_addr: Character RAM for text modes (hex, omit for ROM charset)
+   - bitmap_addr: Bitmap location for bitmap modes (hex)
+
+Example for TASM 7.1 (screen at $0800):
+  capture_screen_with_config(mode="standard_text", screen_addr="0800")
+
+Common causes of detection issues:
+- Programs using custom screen memory (TASM, demos, games)
+- Raster interrupts switching modes mid-screen
+- Custom VIC-II bank configurations ($DD00)
 - Programs that haven't fully initialized the display yet"""
 
 
@@ -943,6 +998,39 @@ async def _handle_tool(client: httpx.AsyncClient, name: str, args: dict) -> str:
         scale = args.get("scale", 2)
         include_border = args.get("include_border", True)
         return await capture_all_screen_modes_logic(client, scale, include_border)
+
+    elif name == "capture_screen_with_config":
+        mode_str = args["mode"]
+        try:
+            mode = ScreenMode(mode_str)
+        except ValueError:
+            return f"Invalid screen mode: {mode_str}. Valid modes: {[m.value for m in VALID_SCREEN_MODES]}"
+
+        # Parse hex addresses
+        try:
+            screen_addr = int(args["screen_addr"], 16)
+        except ValueError:
+            return f"Invalid screen address: {args['screen_addr']}. Must be hex (e.g., 0400, 0800)"
+
+        char_addr = None
+        if "char_addr" in args and args["char_addr"]:
+            try:
+                char_addr = int(args["char_addr"], 16)
+            except ValueError:
+                return f"Invalid char address: {args['char_addr']}. Must be hex (e.g., 1000, 1800)"
+
+        bitmap_addr = None
+        if "bitmap_addr" in args and args["bitmap_addr"]:
+            try:
+                bitmap_addr = int(args["bitmap_addr"], 16)
+            except ValueError:
+                return f"Invalid bitmap address: {args['bitmap_addr']}. Must be hex (e.g., 2000, 4000)"
+
+        scale = args.get("scale", 2)
+        include_border = args.get("include_border", True)
+        return await capture_screen_with_config_logic(
+            client, mode, screen_addr, char_addr, bitmap_addr, scale, include_border
+        )
 
     elif name == "type_text":
         text = args["text"]

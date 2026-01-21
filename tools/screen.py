@@ -714,6 +714,118 @@ async def capture_screen_with_mode_logic(
     }
 
 
+async def capture_screen_with_config_logic(
+    client: httpx.AsyncClient,
+    mode: ScreenMode,
+    screen_addr: int,
+    char_addr: int | None = None,
+    bitmap_addr: int | None = None,
+    scale: int = 2,
+    include_border: bool = True
+) -> dict:
+    """
+    Capture screen using explicit mode AND memory addresses.
+    Ignores VIC-II register detection entirely - uses provided addresses.
+
+    Args:
+        mode: Screen mode to use for rendering
+        screen_addr: Screen RAM address (must be 1KB aligned, e.g., 0x0400, 0x0800, 0x0C00)
+        char_addr: Character ROM/RAM address for text modes (2KB aligned, e.g., 0x1000, 0x1800)
+        bitmap_addr: Bitmap address for bitmap modes (8KB aligned, e.g., 0x2000)
+        scale: Output image scale factor
+        include_border: Include border in output
+    """
+    await client.put("/v1/machine:pause")
+    try:
+        # Read VIC registers just for colors
+        resp = await client.get("/v1/machine:readmem", params={"address": "D000", "length": 48})
+        resp.raise_for_status()
+        vic_regs = resp.content
+
+        d020 = vic_regs[0x20]  # Border color
+        d021 = vic_regs[0x21]  # Background color 0
+        d022 = vic_regs[0x22]  # Background color 1
+        d023 = vic_regs[0x23]  # Background color 2
+        d024 = vic_regs[0x24]  # Background color 3
+
+        border_color = d020 & 0x0F
+        bg_colors = [d021 & 0x0F, d022 & 0x0F, d023 & 0x0F, d024 & 0x0F]
+
+        # Read color RAM ($D800, always at fixed location)
+        resp = await client.get("/v1/machine:readmem", params={"address": "D800", "length": 1000})
+        resp.raise_for_status()
+        color_ram = resp.content
+
+        # Read screen RAM from specified address
+        resp = await client.get("/v1/machine:readmem", params={
+            "address": f"{screen_addr:04X}", "length": 1000
+        })
+        resp.raise_for_status()
+        screen_ram = resp.content
+
+        # Determine if we need char data or bitmap data based on mode
+        is_bitmap_mode = mode in (ScreenMode.STANDARD_BITMAP, ScreenMode.MULTICOLOR_BITMAP)
+
+        char_data = None
+        bitmap_data = None
+        use_rom_charset = False
+
+        if is_bitmap_mode:
+            # Read bitmap data
+            bmp_addr = bitmap_addr if bitmap_addr is not None else 0x2000
+            resp = await client.get("/v1/machine:readmem", params={
+                "address": f"{bmp_addr:04X}", "length": 8000
+            })
+            resp.raise_for_status()
+            bitmap_data = resp.content
+        else:
+            # Text mode - read character data if custom address provided
+            if char_addr is not None:
+                resp = await client.get("/v1/machine:readmem", params={
+                    "address": f"{char_addr:04X}", "length": 2048
+                })
+                resp.raise_for_status()
+                char_data = resp.content
+                use_rom_charset = False
+            else:
+                # Use ROM charset
+                use_rom_charset = True
+
+    finally:
+        await client.put("/v1/machine:resume")
+
+    png_base64, mode_info = _render_screen_for_mode(
+        mode=mode,
+        screen_ram=screen_ram,
+        color_ram=color_ram,
+        bitmap_data=bitmap_data,
+        char_data=char_data,
+        use_rom_charset=use_rom_charset,
+        bg_colors=bg_colors,
+        border_color=border_color,
+        scale=scale,
+        include_border=include_border,
+    )
+
+    # Build info string with explicit addresses
+    mode_str = f"{mode_info} | Screen: ${screen_addr:04X}"
+    if is_bitmap_mode:
+        bmp_addr = bitmap_addr if bitmap_addr is not None else 0x2000
+        mode_str += f" | Bitmap: ${bmp_addr:04X}"
+    else:
+        if char_addr is not None:
+            mode_str += f" | Charset: ${char_addr:04X} (RAM)"
+        else:
+            mode_str += " | Charset: ROM"
+
+    return {
+        "type": "image",
+        "data": png_base64,
+        "mimeType": "image/png",
+        "info": mode_str
+    }
+
+
 # Valid modes for capture_all (excluding invalid combinations)
 VALID_SCREEN_MODES = [
     ScreenMode.STANDARD_TEXT,
