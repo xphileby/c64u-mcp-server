@@ -211,26 +211,10 @@ async def capture_screen_logic(client: httpx.AsyncClient, scale: int = 2, includ
         resp.raise_for_status()
         screen_ram = resp.content
 
-        # For text modes, we might need to read character data if not using ROM
-        use_rom_charset = True
+        # For text modes, read character data (ROM or RAM based on VIC config)
         char_data = None
         if not bmm:
-            # Check if charset is in ROM ($1000-$1FFF or $9000-$9FFF in VIC space)
-            # Actually VIC sees ROM at $1000-$1FFF and $9000-$9FFF if configured
-            # In C64, character ROM is at $D000-$D7FF but VIC sees it at $1000-$1FFF in bank 0 and 2
-            is_bank_0_or_2 = (cia2_pra & 0x03) in [0x03, 0x01]
-            is_rom_char_offset = (char_offset == 0x1000)
-            
-            if is_bank_0_or_2 and is_rom_char_offset:
-                use_rom_charset = True
-            else:
-                use_rom_charset = False
-                # Read character data from RAM
-                resp = await client.get("/v1/machine:readmem", params={
-                    "address": f"{char_addr:04X}", "length": 2048
-                })
-                resp.raise_for_status()
-                char_data = resp.content
+            char_data = await _read_charset_data(client, vic_state)
 
         # Read bitmap data if in bitmap mode
         bitmap_data = None
@@ -322,13 +306,10 @@ async def capture_screen_logic(client: httpx.AsyncClient, scale: int = 2, includ
                 char_code = screen_byte & 0x3F
                 cell_bg = bg_colors[bg_select]
                 
-                # Get character bitmap
+                # Get character bitmap from actual memory
                 char_offset_local = char_code * 8
-                if use_rom_charset:
-                    char_bitmap = C64_CHARSET[char_offset_local:char_offset_local + 8]
-                else:
-                    char_bitmap = char_data[char_offset_local:char_offset_local + 8]
-                
+                char_bitmap = char_data[char_offset_local:char_offset_local + 8]
+
                 # Render character
                 for row in range(8):
                     byte = char_bitmap[row] if row < len(char_bitmap) else 0
@@ -350,12 +331,9 @@ async def capture_screen_logic(client: httpx.AsyncClient, scale: int = 2, includ
                 fg_color = color_byte & 0x0F
                 is_multicolor = bool(color_byte & 0x08)
                 
-                # Get character bitmap
+                # Get character bitmap from actual memory
                 char_offset_local = char_code * 8
-                if use_rom_charset:
-                    char_bitmap = C64_CHARSET[char_offset_local:char_offset_local + 8]
-                else:
-                    char_bitmap = char_data[char_offset_local:char_offset_local + 8]
+                char_bitmap = char_data[char_offset_local:char_offset_local + 8]
 
                 if is_multicolor:
                     # Multicolor: 4x8 double-wide pixels, 4 colors
@@ -394,13 +372,10 @@ async def capture_screen_logic(client: httpx.AsyncClient, scale: int = 2, includ
                 char_code = screen_ram[cell_idx]
                 fg_color = color_ram[cell_idx] & 0x0F
                 
-                # Get character bitmap
+                # Get character bitmap from actual memory
                 char_offset_local = char_code * 8
-                if use_rom_charset:
-                    char_bitmap = C64_CHARSET[char_offset_local:char_offset_local + 8]
-                else:
-                    char_bitmap = char_data[char_offset_local:char_offset_local + 8]
-                
+                char_bitmap = char_data[char_offset_local:char_offset_local + 8]
+
                 # Render character
                 for row in range(8):
                     byte = char_bitmap[row] if row < len(char_bitmap) else 0
@@ -431,8 +406,6 @@ async def capture_screen_logic(client: httpx.AsyncClient, scale: int = 2, includ
         mode_str += f" | Bitmap: ${bitmap_addr:04X}"
     else:
         mode_str += f" | Charset: ${char_addr:04X}"
-        if use_rom_charset:
-            mode_str += " (ROM)"
 
     return {
         "type": "image",
@@ -448,7 +421,6 @@ def _render_screen_for_mode(
     color_ram: bytes,
     bitmap_data: bytes | None,
     char_data: bytes | None,
-    use_rom_charset: bool,
     bg_colors: list[int],
     border_color: int,
     scale: int,
@@ -457,6 +429,7 @@ def _render_screen_for_mode(
     """
     Render screen data using the specified mode.
     Returns (png_base64, mode_info_string).
+    char_data should contain actual character data read from memory (ROM or RAM).
     """
     # Determine mode flags
     bmm = mode in (ScreenMode.STANDARD_BITMAP, ScreenMode.MULTICOLOR_BITMAP)
@@ -530,10 +503,7 @@ def _render_screen_for_mode(
                 char_code = screen_byte & 0x3F
                 cell_bg = bg_colors[bg_select]
                 char_offset_local = char_code * 8
-                if use_rom_charset:
-                    char_bitmap = C64_CHARSET[char_offset_local:char_offset_local + 8]
-                else:
-                    char_bitmap = char_data[char_offset_local:char_offset_local + 8] if char_data else bytes(8)
+                char_bitmap = char_data[char_offset_local:char_offset_local + 8] if char_data else bytes(8)
                 for row in range(8):
                     byte = char_bitmap[row] if row < len(char_bitmap) else 0
                     for col in range(8):
@@ -554,10 +524,7 @@ def _render_screen_for_mode(
                 fg_color = color_byte & 0x0F
                 is_multicolor = bool(color_byte & 0x08)
                 char_offset_local = char_code * 8
-                if use_rom_charset:
-                    char_bitmap = C64_CHARSET[char_offset_local:char_offset_local + 8]
-                else:
-                    char_bitmap = char_data[char_offset_local:char_offset_local + 8] if char_data else bytes(8)
+                char_bitmap = char_data[char_offset_local:char_offset_local + 8] if char_data else bytes(8)
                 if is_multicolor:
                     mc_colors = [
                         bg_colors[0],
@@ -592,10 +559,7 @@ def _render_screen_for_mode(
                 char_code = screen_ram[cell_idx]
                 fg_color = color_ram[cell_idx] & 0x0F
                 char_offset_local = char_code * 8
-                if use_rom_charset:
-                    char_bitmap = C64_CHARSET[char_offset_local:char_offset_local + 8]
-                else:
-                    char_bitmap = char_data[char_offset_local:char_offset_local + 8] if char_data else bytes(8)
+                char_bitmap = char_data[char_offset_local:char_offset_local + 8] if char_data else bytes(8)
                 for row in range(8):
                     byte = char_bitmap[row] if row < len(char_bitmap) else 0
                     for col in range(8):
@@ -622,13 +586,103 @@ def _render_screen_for_mode(
     return png_base64, mode_info
 
 
+def _get_builtin_charset(uppercase: bool = True) -> bytes:
+    """
+    Get the built-in C64 character ROM data.
+
+    The Ultimate 64's DMA access bypasses CPU memory banking, so we cannot
+    read the character ROM from $D000 by changing $01. Instead, we use the
+    pre-defined C64_CHARSET constant which contains the standard ROM charset.
+
+    Args:
+        uppercase: If True, return uppercase/graphics set (chars 0-127).
+                   If False, return lowercase set (chars 128-255).
+
+    Returns:
+        2KB of character ROM data.
+    """
+    if uppercase:
+        # First 2KB: uppercase/graphics (default C64 charset)
+        return bytes(C64_CHARSET[:2048])
+    else:
+        # Second 2KB: lowercase characters
+        # If C64_CHARSET contains both sets (4KB), return the second half
+        if len(C64_CHARSET) >= 4096:
+            return bytes(C64_CHARSET[2048:4096])
+        else:
+            # Fallback to uppercase if lowercase not available
+            return bytes(C64_CHARSET[:2048])
+
+
+async def _read_charset_data(client: httpx.AsyncClient, vic_state: dict) -> bytes:
+    """
+    Read the character set data based on VIC-II configuration.
+
+    Character memory on the C64:
+    =============================
+
+    Default Character ROM:
+    - Located at $D000-$DFFF in CPU address space (hidden behind I/O)
+    - VIC-II sees it at $1000-$1FFF (bank 0) or $9000-$9FFF (bank 2)
+    - NOTE: Cannot be read via DMA on Ultimate 64 - use built-in C64_CHARSET
+
+    Custom Character Sets in RAM:
+    - Must be 2KB (2048 bytes) aligned
+    - Must be in same 16KB VIC bank as screen memory
+    - Common locations: $2000, $3000, $3800, $A000, $E000, $F000
+
+    VIC Bank selection (CIA2 $DD00, bits 0-1):
+    - %11 (3): Bank 0 = $0000-$3FFF (char ROM at $1000)
+    - %10 (2): Bank 1 = $4000-$7FFF (no char ROM)
+    - %01 (1): Bank 2 = $8000-$BFFF (char ROM at $9000)
+    - %00 (0): Bank 3 = $C000-$FFFF (no char ROM)
+
+    Character memory pointer ($D018, bits 1-3):
+    - %XXX000X: $0000-$07FF in VIC bank
+    - %XXX001X: $0800-$0FFF in VIC bank
+    - %XXX010X: $1000-$17FF in VIC bank (ROM in banks 0,2)
+    - %XXX011X: $1800-$1FFF in VIC bank (ROM in banks 0,2)
+    - %XXX100X: $2000-$27FF in VIC bank
+    - %XXX101X: $2800-$2FFF in VIC bank
+    - %XXX110X: $3000-$37FF in VIC bank
+    - %XXX111X: $3800-$3FFF in VIC bank
+    """
+    char_addr = vic_state["char_addr"]
+    char_offset = vic_state["char_offset"]
+    cia2_pra = vic_state["cia2_pra"]
+
+    # Determine VIC bank number (0-3)
+    vic_bank_num = 3 - (cia2_pra & 0x03)
+
+    # Check if VIC is configured to use character ROM
+    # Character ROM is visible to VIC at offset $1000-$1FFF only in banks 0 and 2
+    is_rom_bank = vic_bank_num in [0, 2]
+    is_rom_offset = char_offset in [0x1000, 0x1800]  # $1000-$1FFF range
+    uses_char_rom = is_rom_bank and is_rom_offset
+
+    if uses_char_rom:
+        # Use built-in C64 character ROM
+        # The ROM contains both upper/graphics ($D000-$D7FF) and lower case ($D800-$DFFF)
+        # char_offset $1000 = uppercase, $1800 = lowercase
+        uppercase = (char_offset == 0x1000)
+        char_data = _get_builtin_charset(uppercase)
+    else:
+        # Read custom character set from RAM
+        # char_addr is already calculated as vic_bank + char_offset
+        resp = await client.get("/v1/machine:readmem", params={
+            "address": f"{char_addr:04X}",
+            "length": 2048
+        })
+        resp.raise_for_status()
+        char_data = resp.content
+
+    return char_data
+
+
 async def _read_all_screen_data(client: httpx.AsyncClient, vic_state: dict) -> dict:
     """Read all screen data needed for rendering any mode."""
     screen_addr = vic_state["screen_addr"]
-    char_addr = vic_state["char_addr"]
-    char_offset = vic_state["char_offset"]
     bitmap_addr = vic_state["bitmap_addr"]
-    cia2_pra = vic_state["cia2_pra"]
 
     # Read color RAM ($D800, always at fixed location)
     resp = await client.get("/v1/machine:readmem", params={"address": "D800", "length": 1000})
@@ -642,19 +696,8 @@ async def _read_all_screen_data(client: httpx.AsyncClient, vic_state: dict) -> d
     resp.raise_for_status()
     screen_ram = resp.content
 
-    # Determine if ROM charset is used
-    is_bank_0_or_2 = (cia2_pra & 0x03) in [0x03, 0x01]
-    is_rom_char_offset = (char_offset == 0x1000)
-    use_rom_charset = is_bank_0_or_2 and is_rom_char_offset
-
-    # Read character data from RAM (needed for text modes with custom charset)
-    char_data = None
-    if not use_rom_charset:
-        resp = await client.get("/v1/machine:readmem", params={
-            "address": f"{char_addr:04X}", "length": 2048
-        })
-        resp.raise_for_status()
-        char_data = resp.content
+    # Read character data (handles both ROM and RAM based on VIC configuration)
+    char_data = await _read_charset_data(client, vic_state)
 
     # Read bitmap data (needed for bitmap modes)
     resp = await client.get("/v1/machine:readmem", params={
@@ -668,7 +711,6 @@ async def _read_all_screen_data(client: httpx.AsyncClient, vic_state: dict) -> d
         "color_ram": color_ram,
         "char_data": char_data,
         "bitmap_data": bitmap_data,
-        "use_rom_charset": use_rom_charset,
     }
 
 
@@ -695,7 +737,6 @@ async def capture_screen_with_mode_logic(
         color_ram=screen_data["color_ram"],
         bitmap_data=screen_data["bitmap_data"],
         char_data=screen_data["char_data"],
-        use_rom_charset=screen_data["use_rom_charset"],
         bg_colors=vic_state["bg_colors"],
         border_color=vic_state["border_color"],
         scale=scale,
@@ -768,7 +809,6 @@ async def capture_screen_with_config_logic(
 
         char_data = None
         bitmap_data = None
-        use_rom_charset = False
 
         if is_bitmap_mode:
             # Read bitmap data
@@ -779,17 +819,17 @@ async def capture_screen_with_config_logic(
             resp.raise_for_status()
             bitmap_data = resp.content
         else:
-            # Text mode - read character data if custom address provided
+            # Text mode - read character data
             if char_addr is not None:
+                # Read from specified RAM address
                 resp = await client.get("/v1/machine:readmem", params={
                     "address": f"{char_addr:04X}", "length": 2048
                 })
                 resp.raise_for_status()
                 char_data = resp.content
-                use_rom_charset = False
             else:
-                # Use ROM charset
-                use_rom_charset = True
+                # Use built-in character ROM (uppercase/graphics set)
+                char_data = _get_builtin_charset(uppercase=True)
 
     finally:
         await client.put("/v1/machine:resume")
@@ -800,7 +840,6 @@ async def capture_screen_with_config_logic(
         color_ram=color_ram,
         bitmap_data=bitmap_data,
         char_data=char_data,
-        use_rom_charset=use_rom_charset,
         bg_colors=bg_colors,
         border_color=border_color,
         scale=scale,
@@ -860,7 +899,6 @@ async def capture_all_screen_modes_logic(
             color_ram=screen_data["color_ram"],
             bitmap_data=screen_data["bitmap_data"],
             char_data=screen_data["char_data"],
-            use_rom_charset=screen_data["use_rom_charset"],
             bg_colors=vic_state["bg_colors"],
             border_color=vic_state["border_color"],
             scale=scale,
