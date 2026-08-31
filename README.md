@@ -1,3 +1,5 @@
+
+
 # Commodore 64 Ultimate MCP Server
 
 Control your Commodore 64 Ultimate device with AI. This MCP server lets Claude and other AI assistants interact with your C64 Ultimate hardware over your local network.
@@ -40,7 +42,7 @@ uv sync
 
 ## Configuration
 
-Set the `C64U_URL` environment variable to your device's IP address:
+Set the `C64U_URL` environment variable to your device's base URL:
 
 ```bash
 export C64U_URL="http://192.168.200.157"
